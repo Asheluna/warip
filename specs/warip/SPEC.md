@@ -124,32 +124,41 @@ Login is **optional** and only needed for Drive.
 
 ## 6. Success metrics
 
-The targets are **proposed** and get finalised after the Phase 2 baseline.
+Targets are final as of 2026-09-29. They're based on the logged-out Phase 2 baseline of unmodified `warp-oss`
+(`measurements/2026-09-29-oss-baseline.md`). The logged-in targets (M3b, M4b) get set after the logged-in baseline.
 
-| ID | Metric | Target |
-|---|---|---|
-| M1 | PSS, 1 window / 1 tab, idle 60 s | ≥ 40 % below baseline |
-| M2 | PSS, 1 window / 5 tabs incl. 2 split panes | ≥ 40 % below baseline |
-| M3 | Idle CPU, 1 tab, quiet shell, 60 s | ≤ 0.5 % of one core average |
-| M4 | Idle context switches/s (a root-free proxy for wakeups) | ≥ 50 % below baseline |
-| M5 | Cold start to first prompt | ≥ 30 % faster than baseline |
-| M6 | Network connections while logged out (`ss -tunp`) | 0 |
-| M6b | Network while logged in and idle for 10 min | Only Warp API hosts; Drive WebSocket plus keepalive, no other periodic requests |
-| M7 | NVIDIA device files open (`/proc/<pid>/fd`) | 0 |
-| M8 | Heavy output (`seq 1 2000000`), then idle 60 s | PSS returns within 10 % of pre-burst value |
-| M9 | 1-hour soak, idle | PSS growth ≤ 5 % |
+| ID | Metric | Baseline | Target |
+|---|---|---|---|
+| M1 | PSS, 1 window / 1 tab, idle 60 s | 379 MB | ≤ 225 MB (−40 %) |
+| M2 | PSS, 1 window / 5 tabs incl. 2 split panes | 415 MB | ≤ 250 MB |
+| M3 | Idle CPU, 1 tab, logged out | 0.32 % of one core | ≤ 0.3 % |
+| M3b | Idle CPU, 1 tab, logged in | pending | pending |
+| M4 | Idle context switches/s (a root-free proxy for wakeups), logged out | 94 | ≤ 47 (−50 %) |
+| M4b | Idle context switches/s, logged in | pending | pending |
+| M5 | Start to first prompt, median of 5 | 1.22 s | ≤ 0.85 s (−30 %) |
+| M6 | Network sockets while logged out (`ss -tunp`) | 0 | 0 |
+| M6b | Network while logged in and idle | pending | Only Warp API hosts; Drive WebSocket plus keepalive |
+| M7 | NVIDIA device files open (`/proc/<pid>/fd`) | 12 | 0 |
+| M8 | PSS after heavy output (`seq 1 2000000`) and 60 s idle, vs. before | +1 % | ≤ +10 % |
+| M9 | 1-hour soak, idle | deferred | PSS growth ≤ 5 % |
+
+For reference, the installed stable Warp in daily use (logged in, long-running session) measured 503 MB,
+3.5 % idle CPU, about 425 context switches/s and 8 sockets (`measurements/2026-09-29-stable-passive.md`).
 
 ### 6.1 Measurement method
 
 - `script/warip/measure` (helpers in `script/warip/lib/metrics.sh`) writes Markdown reports to
   `specs/warip/measurements/<date>-<label>.md`. Modes:
-  - `setup` does the one-time manual onboarding and enables local control in an isolated bench profile.
+  - `setup` does the one-time manual onboarding in an isolated bench profile.
   - `run` covers S5 (startup), S1 (1 tab), S2 (5 tabs, 2 splits) and S3 (heavy output).
   - `passive` samples an already running Warp, such as the installed stable.
 - Bench profiles are isolated through `XDG_{CONFIG,DATA,STATE,CACHE}_HOME` under `~/.cache/warip-bench/<label>`.
   Warp's own `WARP_DATA_PROFILE` only works in debug builds.
-- Tabs and panes are automated with Warp's built-in `warpctrl` (`<binary> --warpctrl …`). It rejects
-  newlines by design, so for S3 the user presses Enter once.
+- Tabs, panes and the S3 command are **manual steps**. The script prompts for them and waits for Enter.
+  Warp's `warpctrl` would need the non-default `warp_control_cli` feature, which would change the build
+  under test.
+- `setup` writes the bench `settings.toml` itself (`restore_session = false`, `prefer_low_power_gpu = true`).
+  `stop_app` signals the whole process group.
 - Metrics cover only the app's own processes: the tree filtered by executable, so shells are excluded.
   - PSS comes from `smaps_rollup`, CPU from `/proc/<pid>/stat` ticks, and context switches from `/proc/<pid>/task/*/status`.
   - Sockets come from `ss -tunp`, and NVIDIA file descriptors from `/proc/<pid>/fd`.
@@ -210,6 +219,11 @@ The result is recorded as a table in `specs/warip/services.md`.
 ### 7.5 GPU (Phase 6)
 
 - Keep `prefer_low_power_gpu = true`.
+- **Crash recovery switches to the dGPU.** When `prefer_low_power_gpu` isn't set explicitly, Warp starts a
+  crash-recovery child process (`app/src/crash_recovery.rs`). If the parent dies before that child is
+  cleaned up, the child relaunches Warp and **permanently writes `prefer_low_power_gpu = false`**. A
+  SIGTERM is enough to trigger this; it happened during baseline setup. warip should write the preference
+  explicitly on first run, or drop the `DedicatedGpu` recovery mechanism on Linux.
 - Stop the dGPU from being opened. First test is launch-time only: set `VK_DRIVER_FILES` to the Intel ICD
   in the `.desktop` file and wrapper. If that satisfies M7, keep it and don't patch code.
 - Only if needed: restrict adapter enumeration in `warpui` rendering to the preferred adapter.

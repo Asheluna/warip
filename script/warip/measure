@@ -5,7 +5,7 @@
 # Usage:
 #   script/warip/measure setup   <label> <binary>
 #       Launch <binary> in an isolated bench profile for one-time manual setup
-#       (onboarding, enabling local control). Applies bench settings afterwards.
+#       (onboarding). Bench settings are written automatically.
 #   script/warip/measure run     <label> <binary> [--idle-secs N] [--starts N]
 #       Run scenarios S5 (startup), S1 (1 tab idle), S2 (5 tabs, 2 splits) and
 #       S3 (heavy output, then idle) and write a report.
@@ -66,16 +66,19 @@ launch() {
 }
 
 # Stops the app and waits for it to exit (SIGKILL after 10 s).
+# The app runs in its own session (setsid), so the whole process group is
+# signalled. This includes Warp's crash-recovery child, which would otherwise
+# treat the stop as a crash and relaunch the app on the dedicated GPU.
 stop_app() {
   local pid="$1" i
   CURRENT_PID=""
-  kill -TERM "$pid" 2>/dev/null || return 0
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || return 0
   for i in $(seq 1 20); do
     kill -0 "$pid" 2>/dev/null || return 0
     sleep 0.5
   done
   log "app $pid did not exit, sending SIGKILL"
-  kill -KILL "$pid" 2>/dev/null || true
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
 }
 
 # Waits up to 60 s for the marker file; prints its timestamp.
@@ -92,10 +95,12 @@ wait_for_marker() {
   return 1
 }
 
-warpctrl() {
-  local binary="$1" pid="$2"
-  shift 2
-  "$binary" --warpctrl "$@" --pid "$pid" >/dev/null
+# Shows manual instructions for the app window and waits for Enter.
+# Manual steps are used because warpctrl needs the non-default
+# `warp_control_cli` feature, which would change the build under test.
+ask_user() {
+  printf '\n[measure] %s\n          Then come back here and press Enter.\n' "$*" >&2
+  read -r _
 }
 
 format_row() {
@@ -126,20 +131,50 @@ TABLE_HEADER='| Scenario | PSS (MB) | Threads | CPU (% of 1 core) | Ctx switches
 
 cmd_setup() {
   local label="$1" binary="$2" pid
+  write_bench_settings "$label" "$binary"
   pid="$(launch "$label" "$binary")"
   CURRENT_PID="$pid"
-  cat >&2 <<EOF
-
-[measure] $label is running (pid $pid) in its bench profile. In that window:
-  1. Complete onboarding (skip login).
-  2. Settings -> enable "Local control".
-Then come back here and press Enter.
-EOF
-  read -r _
-  warpctrl "$binary" "$pid" setting set general.restore_session false
-  warpctrl "$binary" "$pid" setting set system.prefer_low_power_gpu true
-  log "bench settings applied; stopping app"
+  ask_user "$label is running (pid $pid) in its bench profile.
+          In that window, complete onboarding (skip login)."
   stop_app "$pid"
+  check_bench_settings "$label" "$binary"
+}
+
+# Path of the bench profile's settings.toml. The config directory is named
+# after the binary (warp-oss, warip).
+bench_settings_file() {
+  echo "$HOME/.cache/warip-bench/$1/config/$(basename "$2")/settings.toml"
+}
+
+# Writes the settings every bench run relies on:
+# - restore_session = false: each start opens one fresh window and tab.
+# - prefer_low_power_gpu = true: render on the iGPU. Setting it explicitly also
+#   stops Warp from spawning its crash-recovery child, which would switch the
+#   profile to the dedicated GPU if the app is stopped before it has drawn.
+write_bench_settings() {
+  local settings
+  settings="$(bench_settings_file "$1" "$2")"
+  mkdir -p "$(dirname "$settings")"
+  cat >"$settings" <<'EOF'
+[general]
+restore_session = false
+
+[system]
+prefer_low_power_gpu = true
+EOF
+  log "bench settings written to ${settings#"$HOME"/}"
+}
+
+# Warns when the bench profile lost the settings from write_bench_settings.
+check_bench_settings() {
+  local settings
+  settings="$(bench_settings_file "$1" "$2")"
+  if grep -Eq '^\s*restore_session\s*=\s*false' "$settings" 2>/dev/null &&
+    grep -Eq '^\s*prefer_low_power_gpu\s*=\s*true' "$settings" 2>/dev/null; then
+    log "bench settings OK"
+  else
+    log "WARNING: bench settings changed in ${settings#"$HOME"/} (rerun setup)"
+  fi
 }
 
 cmd_run() {
@@ -149,6 +184,7 @@ cmd_run() {
   marker="$(mktemp)"
   report="$REPORT_DIR/$(date +%F)-$label.md"
   mkdir -p "$REPORT_DIR"
+  check_bench_settings "$label" "$binary"
 
   log "S5: $STARTS cold starts"
   for _ in $(seq 1 "$STARTS"); do
@@ -174,20 +210,17 @@ cmd_run() {
   peers="$(net_peers "${app[@]}")"
 
   log "S2: 5 tabs, 2 splits"
-  for _ in 1 2 3 4; do warpctrl "$binary" "$pid" tab create; sleep 1; done
-  warpctrl "$binary" "$pid" pane split --direction right
-  warpctrl "$binary" "$pid" pane split --direction down
+  ask_user "In the $label window:
+            1. Open 4 new tabs (Ctrl+Shift+T), so there are 5 in total.
+            2. In the last tab, split the pane right (Ctrl+Shift+D) and then down (Ctrl+Shift+E).
+               If a shortcut differs, use right-click -> Split pane.
+          Don't touch the window afterwards."
   sleep "$SETTLE_SECS"
   s2="$(sample_idle "$pid" "$exe" "$IDLE_SECS")"
 
   log "S3: heavy output"
-  warpctrl "$binary" "$pid" input insert "seq 1 2000000"
-  cat >&2 <<EOF
-
-[measure] Focus the $label window and press Enter to run the inserted command.
-          When the output has finished, come back here and press Enter.
-EOF
-  read -r _
+  ask_user "In the $label window, run: seq 1 2000000
+          Wait until the output has finished."
   s3_burst="$(sample_idle "$pid" "$exe" 1)"
   s3_idle="$(sample_idle "$pid" "$exe" "$IDLE_SECS")"
   stop_app "$pid"
