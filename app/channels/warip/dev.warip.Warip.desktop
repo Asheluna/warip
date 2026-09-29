@@ -1,0 +1,23 @@
+[Desktop Entry]
+# Template: script/warip/install-desktop-entry replaces @WARIP_BIN@ with the
+# absolute path of the warip binary and installs the result for the user.
+Version=1.0
+
+Type=Application
+
+Name=warip
+GenericName=Terminal
+Comment=Lightweight fork of the Warp terminal
+
+Exec=@WARIP_BIN@
+StartupWMClass=dev.warip.Warip
+
+Keywords=shell;prompt;command;commandline;cmd;terminal;
+
+# Generic icon from the icon theme; warip does not use Warp's branding.
+Icon=utilities-terminal
+
+Categories=System;TerminalEmulator;
+
+# Don't run this application within a terminal.
+Terminal=false
