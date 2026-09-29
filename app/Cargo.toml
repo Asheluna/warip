@@ -43,6 +43,12 @@ path = "src/bin/dev.rs"
 test = false
 
 [[bin]]
+name = "warip"
+path = "src/bin/warip.rs"
+required-features = ["warip"]
+test = false
+
+[[bin]]
 name = "preview"
 path = "src/bin/preview.rs"
 required-features = ["preview_channel"]
@@ -462,6 +468,8 @@ embed-resource = "3.0"
 
 # Note that we support channel-specific enables for these features
 [features]
+# Lightweight warip fork: identity and trimming (see specs/warip/SPEC.md).
+warip = []
 tui = ["warp_terminal/tui", "warpui_core/tui"]
 ai_resume_button = []
 autoupdate = []

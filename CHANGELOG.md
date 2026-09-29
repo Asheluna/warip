@@ -3,6 +3,10 @@
 ## 2026-09-29
 
 ### Added
+- `warip` binary and Cargo feature with its own identity (`dev.warip.Warip`): separate config/data/state directories, keyring login and window class, and "warip" as the window title
+- `specs/warip/PATCHES.md`: list of all edits to upstream files
+- Desktop entry for warip (`app/channels/warip/dev.warip.Warip.desktop`) and `script/warip/install-desktop-entry`, so GNOME shows "warip" in the dock and Alt+Tab
+- `specs/warip/README.md`: what warip is, status, build, run and measure instructions
 - `script/warip/measure` and `script/warip/lib/metrics.sh`: reproducible memory, CPU, context-switch, network and GPU measurements for Warp/warip builds (setup, run and passive modes)
 - Initial project specification for warip, a lightweight soft fork of Warp (`specs/warip/SPEC.md`)
 - Baseline measurements: unmodified `warp-oss` logged out (`specs/warip/measurements/2026-09-29-oss-baseline.md`) and installed stable Warp in daily use (`2026-09-29-stable-passive.md`)

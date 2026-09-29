@@ -322,7 +322,7 @@ The result is recorded as a table in `specs/warip/services.md`.
 | # | Question | Status |
 |---|---|---|
 | Q1 | What should login still provide? | **Resolved:** Warp Drive sync only (§5.3) |
-| Q2 | App ID and naming: is `dev.warip.Warip` OK? Do you have an icon preference? | Open (Phase 3) |
+| Q2 | App ID and naming: is `dev.warip.Warip` OK? Do you have an icon preference? | **Resolved:** `dev.warip.Warip`, window title "warip", generic `utilities-terminal` icon for now |
 | Q3 | Keep local Workflows? | **Resolved:** keep; the code is shared with Drive |
 | Q4 | Keep the file tree and code editor panes? | **Resolved:** keep |
 | Q5 | Should the Warp install be removed or left alone once warip works? | Open (Phase 8) |

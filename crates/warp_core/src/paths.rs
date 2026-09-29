@@ -132,12 +132,15 @@ pub fn data_dir() -> PathBuf {
 ///
 /// Most TUI channel binaries use the same application ID as the GUI. The OSS
 /// TUI is the exception: it uses `WarpTui`, while the corresponding GUI uses
-/// `WarpOss`.
+/// `WarpOss`. Other OSS-channel GUIs (such as warip) keep their own ID.
 #[cfg(any(not(target_os = "macos"), test))]
 fn gui_app_id_for_channel(channel: Channel, current_app_id: AppId) -> AppId {
     match channel {
-        Channel::Oss => AppId::new("dev", "warp", "WarpOss"),
-        Channel::Stable
+        Channel::Oss if current_app_id.application_name() == "WarpTui" => {
+            AppId::new("dev", "warp", "WarpOss")
+        }
+        Channel::Oss
+        | Channel::Stable
         | Channel::Preview
         | Channel::Dev
         | Channel::Integration
