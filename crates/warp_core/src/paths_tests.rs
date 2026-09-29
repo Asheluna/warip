@@ -65,6 +65,15 @@ fn test_gui_app_id_maps_oss_tui_to_oss_gui() {
 }
 
 #[test]
+fn test_gui_app_id_keeps_other_oss_gui_ids() {
+    let oss = gui_app_id_for_channel(Channel::Oss, AppId::new("dev", "warp", "WarpOss"));
+    let warip = gui_app_id_for_channel(Channel::Oss, AppId::new("dev", "warip", "Warip"));
+
+    assert_eq!(oss.to_string(), "dev.warp.WarpOss");
+    assert_eq!(warip.to_string(), "dev.warip.Warip");
+}
+
+#[test]
 fn test_gui_config_and_mcp_paths_resolve_explicit_sources() {
     let home_dir = home_dir().expect("Should be able to compute home directory");
     let gui_config_dir = gui_config_local_dir().expect("GUI config path should resolve");
