@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+#
+# script/warip/measure - reproducible resource measurements for Warp/warip builds.
+#
+# Usage:
+#   script/warip/measure setup   <label> <binary>
+#       Launch <binary> in an isolated bench profile for one-time manual setup
+#       (onboarding, enabling local control). Applies bench settings afterwards.
+#   script/warip/measure run     <label> <binary> [--idle-secs N] [--starts N]
+#       Run scenarios S5 (startup), S1 (1 tab idle), S2 (5 tabs, 2 splits) and
+#       S3 (heavy output, then idle) and write a report.
+#   script/warip/measure passive <label> <pid> [--idle-secs N] [--delay N]
+#       Sample an already running Warp (e.g. the installed stable) while idle.
+#
+# Bench profiles live in ~/.cache/warip-bench/<label> and never touch the
+# regular Warp/warip config. Reports go to specs/warip/measurements/.
+# See specs/warip/SPEC.md §6 for the metrics and targets.
+
+set -euo pipefail
+# Use "." as decimal separator regardless of the user's locale.
+export LC_ALL=C
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
+# shellcheck source=script/warip/lib/metrics.sh
+. "$REPO_ROOT/script/warip/lib/metrics.sh"
+
+REPORT_DIR="$REPO_ROOT/specs/warip/measurements"
+IDLE_SECS=60
+STARTS=5
+DELAY=0
+SETTLE_SECS=10
+
+usage() {
+  sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+log() { printf '[measure] %s\n' "$*" >&2; }
+
+# PID of the app currently under test; stopped on exit so a failed run never
+# leaves a window behind.
+CURRENT_PID=""
+cleanup() {
+  if [ -n "$CURRENT_PID" ]; then
+    stop_app "$CURRENT_PID"
+  fi
+}
+trap cleanup EXIT
+
+# Environment that isolates a bench profile via the XDG base directories.
+bench_env() {
+  local root="$HOME/.cache/warip-bench/$1"
+  mkdir -p "$root"/{config,data,state,cache}
+  echo "XDG_CONFIG_HOME=$root/config XDG_DATA_HOME=$root/data XDG_STATE_HOME=$root/state XDG_CACHE_HOME=$root/cache"
+}
+
+# Launches the app in the bench profile; prints its PID. Optional $3 is a
+# startup marker file passed to the shell (see ~/.bashrc WARIP_BENCH_MARKER).
+launch() {
+  local label="$1" binary="$2" marker="${3:-}"
+  local log_file="$HOME/.cache/warip-bench/$label/launch.log"
+  # shellcheck disable=SC2046
+  env $(bench_env "$label") ${marker:+WARIP_BENCH_MARKER="$marker"} \
+    setsid "$binary" >"$log_file" 2>&1 &
+  echo $!
+}
+
+# Stops the app and waits for it to exit (SIGKILL after 10 s).
+stop_app() {
+  local pid="$1" i
+  CURRENT_PID=""
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for i in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  log "app $pid did not exit, sending SIGKILL"
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+# Waits up to 60 s for the marker file; prints its timestamp.
+wait_for_marker() {
+  local marker="$1" i
+  for i in $(seq 1 600); do
+    if [ -s "$marker" ]; then
+      cat "$marker"
+      return 0
+    fi
+    sleep 0.1
+  done
+  log "no prompt marker after 60 s (is the ~/.bashrc WARIP_BENCH_MARKER block present?)"
+  return 1
+}
+
+warpctrl() {
+  local binary="$1" pid="$2"
+  shift 2
+  "$binary" --warpctrl "$@" --pid "$pid" >/dev/null
+}
+
+format_row() {
+  # $1 = scenario, $2 = "pss_kb threads cpu_pct ctx_per_sec net nvidia"
+  read -r pss threads cpu ctx net nv <<<"$2"
+  printf '| %s | %d | %d | %.2f | %.1f | %d | %d |\n' "$1" $((pss / 1024)) "$threads" "$cpu" "$ctx" "$net" "$nv"
+}
+
+report_header() {
+  local label="$1" target="$2" kind="$3"
+  cat <<EOF
+# Measurement: $label
+
+| | |
+|---|---|
+| Date | $(date '+%F %T') |
+| Kind | $kind |
+| Target | \`$target\` |
+| warip commit | \`$(git -C "$REPO_ROOT" rev-parse --short HEAD)\` |
+| Kernel / session | $(uname -r) / ${XDG_SESSION_TYPE:-unknown} |
+| Idle window | ${IDLE_SECS} s |
+
+EOF
+}
+
+TABLE_HEADER='| Scenario | PSS (MB) | Threads | CPU (% of 1 core) | Ctx switches/s | Net sockets | NVIDIA fds |
+|---|---|---|---|---|---|---|'
+
+cmd_setup() {
+  local label="$1" binary="$2" pid
+  pid="$(launch "$label" "$binary")"
+  CURRENT_PID="$pid"
+  cat >&2 <<EOF
+
+[measure] $label is running (pid $pid) in its bench profile. In that window:
+  1. Complete onboarding (skip login).
+  2. Settings -> enable "Local control".
+Then come back here and press Enter.
+EOF
+  read -r _
+  warpctrl "$binary" "$pid" setting set general.restore_session false
+  warpctrl "$binary" "$pid" setting set system.prefer_low_power_gpu true
+  log "bench settings applied; stopping app"
+  stop_app "$pid"
+}
+
+cmd_run() {
+  local label="$1" binary="$2"
+  local exe marker pid start_ts end_ts startups=() report
+  exe="$(readlink -f "$binary")"
+  marker="$(mktemp)"
+  report="$REPORT_DIR/$(date +%F)-$label.md"
+  mkdir -p "$REPORT_DIR"
+
+  log "S5: $STARTS cold starts"
+  for _ in $(seq 1 "$STARTS"); do
+    rm -f "$marker"
+    start_ts="$(date +%s.%N)"
+    pid="$(launch "$label" "$binary" "$marker")"
+    CURRENT_PID="$pid"
+    end_ts="$(wait_for_marker "$marker")"
+    startups+=("$(awk -v a="$start_ts" -v b="$end_ts" 'BEGIN {printf "%.3f", b - a}')")
+    stop_app "$pid"
+    sleep 3
+  done
+
+  log "S1: 1 tab idle"
+  rm -f "$marker"
+  pid="$(launch "$label" "$binary" "$marker")"
+  CURRENT_PID="$pid"
+  wait_for_marker "$marker" >/dev/null
+  sleep "$SETTLE_SECS"
+  local s1 s2 s3_burst s3_idle peers
+  s1="$(sample_idle "$pid" "$exe" "$IDLE_SECS")"
+  mapfile -t app < <(app_pids "$pid" "$exe")
+  peers="$(net_peers "${app[@]}")"
+
+  log "S2: 5 tabs, 2 splits"
+  for _ in 1 2 3 4; do warpctrl "$binary" "$pid" tab create; sleep 1; done
+  warpctrl "$binary" "$pid" pane split --direction right
+  warpctrl "$binary" "$pid" pane split --direction down
+  sleep "$SETTLE_SECS"
+  s2="$(sample_idle "$pid" "$exe" "$IDLE_SECS")"
+
+  log "S3: heavy output"
+  warpctrl "$binary" "$pid" input insert "seq 1 2000000"
+  cat >&2 <<EOF
+
+[measure] Focus the $label window and press Enter to run the inserted command.
+          When the output has finished, come back here and press Enter.
+EOF
+  read -r _
+  s3_burst="$(sample_idle "$pid" "$exe" 1)"
+  s3_idle="$(sample_idle "$pid" "$exe" "$IDLE_SECS")"
+  stop_app "$pid"
+  rm -f "$marker"
+
+  {
+    report_header "$label" "$binary" "run"
+    echo "## Startup (S5)"
+    echo
+    echo "Time from launch to first shell prompt, warm page cache."
+    echo
+    echo "| Runs (s) | Median (s) |"
+    echo "|---|---|"
+    printf '| %s | %s |\n' "${startups[*]}" \
+      "$(printf '%s\n' "${startups[@]}" | sort -n | awk '{a[NR] = $1} END {print a[int((NR + 1) / 2)]}')"
+    echo
+    echo "## Idle scenarios"
+    echo
+    echo "$TABLE_HEADER"
+    format_row "S1: 1 tab idle" "$s1"
+    format_row "S2: 5 tabs, 2 splits" "$s2"
+    format_row "S3: right after heavy output" "$s3_burst"
+    format_row "S3: idle after heavy output" "$s3_idle"
+    echo
+    echo "## Network peers during S1"
+    echo
+    echo '```'
+    echo "${peers:-none}"
+    echo '```'
+  } >"$report"
+  log "report written to ${report#"$REPO_ROOT"/}"
+}
+
+cmd_passive() {
+  local label="$1" pid="$2" exe report sample peers
+  exe="$(readlink -f "/proc/$pid/exe")"
+  report="$REPORT_DIR/$(date +%F)-$label.md"
+  mkdir -p "$REPORT_DIR"
+  [ "$DELAY" -gt 0 ] && sleep "$DELAY"
+  sample="$(sample_idle "$pid" "$exe" "$IDLE_SECS")"
+  mapfile -t app < <(app_pids "$pid" "$exe")
+  peers="$(net_peers "${app[@]}")"
+  {
+    report_header "$label" "$exe (pid $pid)" "passive (existing session, config and tabs as in daily use)"
+    echo "$TABLE_HEADER"
+    format_row "Idle" "$sample"
+    echo
+    echo "## Network peers"
+    echo
+    echo '```'
+    echo "${peers:-none}"
+    echo '```'
+  } >"$report"
+  log "report written to ${report#"$REPO_ROOT"/}"
+}
+
+[ $# -ge 3 ] || usage
+command="$1" label="$2" target="$3"
+shift 3
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --idle-secs) IDLE_SECS="$2"; shift 2 ;;
+    --starts) STARTS="$2"; shift 2 ;;
+    --delay) DELAY="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+case "$command" in
+  setup) cmd_setup "$label" "$target" ;;
+  run) cmd_run "$label" "$target" ;;
+  passive) cmd_passive "$label" "$target" ;;
+  *) usage ;;
+esac

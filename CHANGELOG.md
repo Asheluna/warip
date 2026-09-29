@@ -3,6 +3,7 @@
 ## 2026-09-29
 
 ### Added
+- `script/warip/measure` and `script/warip/lib/metrics.sh`: reproducible memory, CPU, context-switch, network and GPU measurements for Warp/warip builds (setup, run and passive modes)
 - Initial project specification for warip, a lightweight soft fork of Warp (`specs/warip/SPEC.md`)
 
 ### Changed

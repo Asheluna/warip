@@ -131,7 +131,7 @@ The targets are **proposed** and get finalised after the Phase 2 baseline.
 | M1 | PSS, 1 window / 1 tab, idle 60 s | ≥ 40 % below baseline |
 | M2 | PSS, 1 window / 5 tabs incl. 2 split panes | ≥ 40 % below baseline |
 | M3 | Idle CPU, 1 tab, quiet shell, 60 s | ≤ 0.5 % of one core average |
-| M4 | Idle wakeups/s (`powertop`) | ≥ 50 % below baseline |
+| M4 | Idle context switches/s (a root-free proxy for wakeups) | ≥ 50 % below baseline |
 | M5 | Cold start to first prompt | ≥ 30 % faster than baseline |
 | M6 | Network connections while logged out (`ss -tunp`) | 0 |
 | M6b | Network while logged in and idle for 10 min | Only Warp API hosts; Drive WebSocket plus keepalive, no other periodic requests |
@@ -141,12 +141,23 @@ The targets are **proposed** and get finalised after the Phase 2 baseline.
 
 ### 6.1 Measurement method
 
-- A script `script/warip/measure` in the fork runs the scenarios above against a given binary and
-  writes a Markdown/CSV report to `specs/warip/measurements/<date>-<commit>.md`.
-- Tools used: `/proc/<pid>/smaps_rollup` (PSS summed over the process tree), `/proc/<pid>/stat` ticks,
-  `powertop --csv`, `ss -tunp`, `/proc/<pid>/fd`, and `nvidia-smi`. All are already installed or come from apt.
-- Startup time: launch to the first `precmd` hook (a marker command in a test shell rc), median of 5 runs.
-- Same machine, AC power, same shell config and window size for every run.
+- `script/warip/measure` (helpers in `script/warip/lib/metrics.sh`) writes Markdown reports to
+  `specs/warip/measurements/<date>-<label>.md`. Modes:
+  - `setup` does the one-time manual onboarding and enables local control in an isolated bench profile.
+  - `run` covers S5 (startup), S1 (1 tab), S2 (5 tabs, 2 splits) and S3 (heavy output).
+  - `passive` samples an already running Warp, such as the installed stable.
+- Bench profiles are isolated through `XDG_{CONFIG,DATA,STATE,CACHE}_HOME` under `~/.cache/warip-bench/<label>`.
+  Warp's own `WARP_DATA_PROFILE` only works in debug builds.
+- Tabs and panes are automated with Warp's built-in `warpctrl` (`<binary> --warpctrl …`). It rejects
+  newlines by design, so for S3 the user presses Enter once.
+- Metrics cover only the app's own processes: the tree filtered by executable, so shells are excluded.
+  - PSS comes from `smaps_rollup`, CPU from `/proc/<pid>/stat` ticks, and context switches from `/proc/<pid>/task/*/status`.
+  - Sockets come from `ss -tunp`, and NVIDIA file descriptors from `/proc/<pid>/fd`.
+  - No root is needed.
+- Startup time runs from launch to the first prompt. A guarded `~/.bashrc` block writes a timestamp when
+  `WARIP_BENCH_MARKER` is set. The result is the median of 5 runs with a warm page cache.
+- Same machine, AC power, same shell config for every run. Don't type in the window during a run.
+- S4 (1-hour soak) is deferred.
 
 ---
 
