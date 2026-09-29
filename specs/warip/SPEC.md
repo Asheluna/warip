@@ -125,25 +125,33 @@ Login is **optional** and only needed for Drive.
 ## 6. Success metrics
 
 Targets are final as of 2026-09-29. They're based on the logged-out Phase 2 baseline of unmodified `warp-oss`
-(`measurements/2026-09-29-oss-baseline.md`). The logged-in targets (M3b, M4b) get set after the logged-in baseline.
+(`measurements/2026-09-29-oss-baseline.md`), and the logged-in baseline with Warp Drive synced
+(`measurements/2026-09-29-oss-loggedin.md`). warip is used logged in, for Drive, so the **b** rows are the
+primary targets.
 
 | ID | Metric | Baseline | Target |
 |---|---|---|---|
-| M1 | PSS, 1 window / 1 tab, idle 60 s | 379 MB | ≤ 225 MB (−40 %) |
-| M2 | PSS, 1 window / 5 tabs incl. 2 split panes | 415 MB | ≤ 250 MB |
+| M1 | PSS, 1 window / 1 tab, idle 60 s, logged out | 379 MB | ≤ 225 MB (−40 %) |
+| M1b | PSS, 1 window / 1 tab, idle 60 s, logged in | 619 MB | ≤ 370 MB (−40 %) |
+| M2 | PSS, 1 window / 5 tabs incl. 2 split panes, logged out | 415 MB | ≤ 250 MB |
+| M2b | PSS, 1 window / 5 tabs incl. 2 split panes, logged in | 652 MB | ≤ 390 MB |
 | M3 | Idle CPU, 1 tab, logged out | 0.32 % of one core | ≤ 0.3 % |
-| M3b | Idle CPU, 1 tab, logged in | pending | pending |
+| M3b | Idle CPU, 1 tab, logged in | 0.63 % | ≤ 0.3 % |
 | M4 | Idle context switches/s (a root-free proxy for wakeups), logged out | 94 | ≤ 47 (−50 %) |
-| M4b | Idle context switches/s, logged in | pending | pending |
-| M5 | Start to first prompt, median of 5 | 1.22 s | ≤ 0.85 s (−30 %) |
+| M4b | Idle context switches/s, logged in | 124 | ≤ 60 (−50 %) |
+| M5 | Start to first prompt, median of 5, logged out | 1.22 s | ≤ 0.85 s (−30 %) |
+| M5b | Start to first prompt, median of 5, logged in | 1.42 s | ≤ 1.0 s (−30 %) |
 | M6 | Network sockets while logged out (`ss -tunp`) | 0 | 0 |
-| M6b | Network while logged in and idle | pending | Only Warp API hosts; Drive WebSocket plus keepalive |
+| M6b | Network sockets while logged in and idle | 3 (Warp API on GCP, Google) | ≤ 3; only Warp API and Google auth hosts |
 | M7 | NVIDIA device files open (`/proc/<pid>/fd`) | 12 | 0 |
 | M8 | PSS after heavy output (`seq 1 2000000`) and 60 s idle, vs. before | +1 % | ≤ +10 % |
 | M9 | 1-hour soak, idle | deferred | PSS growth ≤ 5 % |
 
 For reference, the installed stable Warp in daily use (logged in, long-running session) measured 503 MB,
 3.5 % idle CPU, about 425 context switches/s and 8 sockets (`measurements/2026-09-29-stable-passive.md`).
+Its lower PSS than the logged-in `warp-oss` (503 vs 619 MB) is probably partly the build: official releases are
+likely built with LTO and stripped, while our baseline uses the plain `release` profile. Keep the build profile
+the same when comparing warip against the baseline.
 
 ### 6.1 Measurement method
 

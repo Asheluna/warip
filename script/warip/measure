@@ -3,9 +3,10 @@
 # script/warip/measure - reproducible resource measurements for Warp/warip builds.
 #
 # Usage:
-#   script/warip/measure setup   <label> <binary>
+#   script/warip/measure setup   <label> <binary> [--login]
 #       Launch <binary> in an isolated bench profile for one-time manual setup
-#       (onboarding). Bench settings are written automatically.
+#       (onboarding). Bench settings are written automatically. With --login,
+#       log in during onboarding and wait for Warp Drive to sync.
 #   script/warip/measure run     <label> <binary> [--idle-secs N] [--starts N]
 #       Run scenarios S5 (startup), S1 (1 tab idle), S2 (5 tabs, 2 splits) and
 #       S3 (heavy output, then idle) and write a report.
@@ -28,10 +29,11 @@ REPORT_DIR="$REPO_ROOT/specs/warip/measurements"
 IDLE_SECS=60
 STARTS=5
 DELAY=0
+LOGIN=0
 SETTLE_SECS=10
 
 usage() {
-  sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -54,11 +56,25 @@ bench_env() {
   echo "XDG_CONFIG_HOME=$root/config XDG_DATA_HOME=$root/data XDG_STATE_HOME=$root/state XDG_CACHE_HOME=$root/cache"
 }
 
+# Copies the user's default-application choices (e.g. web browser) into the
+# bench profile. The bench overrides XDG_CONFIG_HOME, so without this, links
+# and the login page open in the system default browser instead of the user's.
+sync_default_apps() {
+  local file
+  mkdir -p "$HOME/.cache/warip-bench/$1/config"
+  for file in "$HOME/.config/mimeapps.list" "$HOME/.config/"*-mimeapps.list; do
+    if [ -f "$file" ]; then
+      cp "$file" "$HOME/.cache/warip-bench/$1/config/"
+    fi
+  done
+}
+
 # Launches the app in the bench profile; prints its PID. Optional $3 is a
 # startup marker file passed to the shell (see ~/.bashrc WARIP_BENCH_MARKER).
 launch() {
   local label="$1" binary="$2" marker="${3:-}"
   local log_file="$HOME/.cache/warip-bench/$label/launch.log"
+  sync_default_apps "$label"
   # shellcheck disable=SC2046
   env $(bench_env "$label") ${marker:+WARIP_BENCH_MARKER="$marker"} \
     setsid "$binary" >"$log_file" 2>&1 &
@@ -134,8 +150,16 @@ cmd_setup() {
   write_bench_settings "$label" "$binary"
   pid="$(launch "$label" "$binary")"
   CURRENT_PID="$pid"
-  ask_user "$label is running (pid $pid) in its bench profile.
+  if [ "$LOGIN" -eq 1 ]; then
+    ask_user "$label is running (pid $pid) in its bench profile. In that window:
+            1. Choose \"Log in\" and sign in in the browser.
+            2. If the browser can't hand the login back to the app, use
+               \"Click here to paste your token\" in the app and paste the token.
+            3. Wait until your Warp Drive items appear in the Drive panel."
+  else
+    ask_user "$label is running (pid $pid) in its bench profile.
           In that window, complete onboarding (skip login)."
+  fi
   stop_app "$pid"
   check_bench_settings "$label" "$binary"
 }
@@ -285,6 +309,7 @@ while [ $# -gt 0 ]; do
     --idle-secs) IDLE_SECS="$2"; shift 2 ;;
     --starts) STARTS="$2"; shift 2 ;;
     --delay) DELAY="$2"; shift 2 ;;
+    --login) LOGIN=1; shift ;;
     *) usage ;;
   esac
 done
