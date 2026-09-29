@@ -215,7 +215,14 @@ The result is recorded as a table in `specs/warip/services.md`.
 ### 7.7 Build and install (Phase 8)
 
 - Toolchain pinned by upstream `rust-toolchain.toml` (1.92.0) via rustup.
-- Setup: `./script/bootstrap --skip-common-skills`. This skips upstream's agent-skill install.
+- Setup: **don't run `script/bootstrap`**. It installs the gcloud CLI and its apt repo, linuxdeploy, musl, a
+  protoc download into `/usr/local`, and agent skills, and it asks for a gcloud login. warip needs none of that.
+  Install a curated set instead:
+  - apt: `libssl-dev libfontconfig1-dev libgit2-dev libclang-dev protobuf-compiler`. Ubuntu 24.04's protoc 3.21
+    meets the ≥3.15 requirement from `crates/remote_server/build.rs`. The other build dependencies are already installed.
+  - rustup with toolchain 1.92.0 (`--profile minimal`, plus rustfmt and clippy).
+  - Git LFS isn't needed. The only LFS files are Windows `.pdb` files and ONNX models for the non-default
+    `nld_classifier_*` features.
 - `cargo build --release -p warp --bin warip --no-default-features --features warip`
 - `script/warip/install` copies the binary to `~/.local/bin/warip` and installs a `.desktop` file and icon
   to `~/.local/share/applications` and `~/.local/share/icons`.
